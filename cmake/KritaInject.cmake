@@ -5,25 +5,20 @@
 #
 #   cmake <krita-source> -DCMAKE_PROJECT_krita_INCLUDE=<atherta>/cmake/KritaInject.cmake ...
 #
-# CMake includes this file right after Krita's project() call. The actual
-# add_subdirectory() is deferred to the end of Krita's top-level CMakeLists.txt
-# so that all of Krita's library targets (kritaui, kritaimage, ...) exist.
+# CMake includes this file right after Krita's project() call. The targets
+# are defined at the end of Krita's top-level CMakeLists.txt (deferred), so
+# that all of Krita's library targets (kritaui, kritaimage, ...) exist.
 
 if(CMAKE_VERSION VERSION_LESS 3.19)
     message(FATAL_ERROR "Atherta needs CMake 3.19 or newer (cmake_language(DEFER)).")
 endif()
 
-get_filename_component(_atherta_source_dir "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-set(_atherta_binary_dir "${CMAKE_BINARY_DIR}/atherta3d")
+get_filename_component(ATHERTA_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+message(STATUS "Atherta: plugin sources at ${ATHERTA_SOURCE_DIR}")
 
-message(STATUS "Atherta: plugin sources at ${_atherta_source_dir}")
-
-# Bake the paths into the deferred call so it does not depend on variables
-# that might change while Krita's CMakeLists.txt is processed.
+# Bake the path into the deferred call; add_subdirectory() is not allowed
+# during deferred execution, so the targets are defined by include().
 cmake_language(EVAL CODE "
     cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]]
-                   CALL add_subdirectory [[${_atherta_source_dir}]] [[${_atherta_binary_dir}]])
+                   CALL include [[${ATHERTA_SOURCE_DIR}/cmake/AthertaTargets.cmake]])
 ")
-
-unset(_atherta_source_dir)
-unset(_atherta_binary_dir)

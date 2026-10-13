@@ -771,6 +771,15 @@ void ViewNavigator::frameBounds(const Vec3 &min, const Vec3 &max, double nowSeco
     startSmoothView(target, nowSeconds, false);
 }
 
+void ViewNavigator::centerOn(const Vec3 &point, double nowSeconds)
+{
+    // Blender: viewcenter_pick_invoke() moves the view centre, keeping the distance.
+    finishAnimation();
+    ViewState target = m_state;
+    target.pivot = point;
+    startSmoothView(target, nowSeconds, false);
+}
+
 // ---------------------------------------------------------------------------
 // Touch
 

@@ -1,0 +1,9 @@
+{
+    "Id": "Atherta 3D Paint",
+    "Type": "Service",
+    "X-KDE-Library": "kritaatherta3d",
+    "X-KDE-ServiceTypes": [
+        "Krita/Dock"
+    ],
+    "X-Krita-Version": "28"
+}

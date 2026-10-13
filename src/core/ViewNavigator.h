@@ -162,6 +162,8 @@ public:
     void togglePerspective();
     /** Home / Numpad period: frame an axis aligned bounding box. */
     void frameBounds(const Vec3 &min, const Vec3 &max, double nowSeconds);
+    /** Alt+MMB click: make @p point the new pivot (Blender: view_center_pick). */
+    void centerOn(const Vec3 &point, double nowSeconds);
 
     // --- Touch helpers ---------------------------------------------------
 
