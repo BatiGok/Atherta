@@ -4,6 +4,7 @@
 add_executable(atherta_core_tests
     test_main.cpp
     test_view_navigator.cpp
+    test_mesh.cpp
 )
 target_include_directories(atherta_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/doctest)
 target_link_libraries(atherta_core_tests PRIVATE atherta_core)
