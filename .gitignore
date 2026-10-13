@@ -1,0 +1,6 @@
+/build*/
+/out/
+CMakeLists.txt.user
+.vscode/
+.idea/
+*.swp
