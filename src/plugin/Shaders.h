@@ -323,6 +323,7 @@ uniform int uOrtho;
 uniform float uNear;
 uniform float uFar;
 uniform float uFadeStart;
+uniform float uPixelScale;      // world size of one screen pixel at depth 1 (perspective) or anywhere (ortho)
 
 out vec4 fragColor;
 
@@ -347,16 +348,47 @@ void main()
     }
     vec2 suv = ndc.xy * 0.5 + 0.5;
 
-    // Only paint surfaces that were visible when the stroke was made.
-    float sceneDepth = linearDepth(texture(uDepth, suv).r);
+    vec3 N = normalize(vNormal);
+    vec3 V = uOrtho == 1 ? -uViewDir : normalize(uCameraPos - vWorldPos);
+    float facingSigned = dot(N, V);
+    float facing = abs(facingSigned);
+
+    // Only paint surfaces that were visible when the stroke was made. The
+    // depth map has one sample per screen pixel, so at grazing angles a
+    // surface spans a large depth range inside a pixel: compare against the
+    // farthest *surface* depth of the 3x3 neighbourhood with a slope-scaled
+    // tolerance, otherwise the test aliases into stripes. Background samples
+    // are ignored, or texels on the far side would leak in at silhouettes.
+    ivec2 size = textureSize(uDepth, 0);
+    ivec2 p = clamp(ivec2(suv * vec2(size)), ivec2(0), size - 1);
     float fragDepth = linearDepth(ndc.z * 0.5 + 0.5);
-    if (fragDepth - sceneDepth > max(1e-4, fragDepth * 0.003)) {
+    float centre = texelFetch(uDepth, p, 0).r;
+    float farthest = -1.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 q = clamp(p + ivec2(x, y), ivec2(0), size - 1);
+            float d = texelFetch(uDepth, q, 0).r;
+            if (d < 1.0) {
+                farthest = max(farthest, d);
+            }
+        }
+    }
+    float pixelWorld = uPixelScale * (uOrtho == 1 ? 1.0 : fragDepth);
+    float tolerance = max(1e-4, fragDepth * 0.002) + pixelWorld;
+    float sceneDepth;
+    if (facingSigned > 0.0) {
+        float slope = sqrt(max(1.0 - facing * facing, 0.0)) / max(facing, 0.05);
+        tolerance += pixelWorld * 2.0 * slope;
+        sceneDepth = farthest < 0.0 ? fragDepth : linearDepth(farthest);
+    } else {
+        // Back faces (e.g. a plane seen from behind): strict test only.
+        sceneDepth = centre < 1.0 ? linearDepth(centre) : fragDepth;
+    }
+    if (fragDepth - sceneDepth > tolerance) {
         discard;
     }
 
-    vec3 N = normalize(vNormal);
-    vec3 V = uOrtho == 1 ? -uViewDir : normalize(uCameraPos - vWorldPos);
-    float fade = smoothstep(0.0, uFadeStart, abs(dot(N, V)));
+    float fade = smoothstep(0.0, uFadeStart, facing);
 
     fragColor = texture(uStroke, vec2(suv.x, 1.0 - suv.y)) * fade;
 }

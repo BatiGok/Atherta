@@ -28,6 +28,33 @@ constexpr qreal kDragThresholdMouse = 3.0;
 // Touches closer than this to the last pen event are treated as palm contact.
 constexpr qint64 kPalmRejectionMs = 500;
 
+/**
+ * Makes the viewport's context current and afterwards restores the previous
+ * one. Krita's canvas uploads its textures assuming that a context of the
+ * shared group is current (only macOS makes it current explicitly), so the
+ * context must never be left released with doneCurrent().
+ */
+class ContextGuard
+{
+public:
+    explicit ContextGuard(QOpenGLWidget *widget)
+        : m_previous(QOpenGLContext::currentContext())
+        , m_surface(m_previous ? m_previous->surface() : nullptr)
+    {
+        widget->makeCurrent();
+    }
+    ~ContextGuard()
+    {
+        if (m_previous && m_previous != QOpenGLContext::currentContext()) {
+            m_previous->makeCurrent(m_surface);
+        }
+    }
+
+private:
+    QOpenGLContext *m_previous;
+    QSurface *m_surface;
+};
+
 /** Numpad key with NumLock off arrives as navigation keys with KeypadModifier. */
 int keypadDigit(int key)
 {
@@ -146,9 +173,10 @@ bool Viewport::withContext(const std::function<void(Renderer &, GLuint)> &fn)
     if (!m_glReady) {
         return false;
     }
-    makeCurrent();
-    fn(m_renderer, defaultFramebufferObject());
-    doneCurrent();
+    {
+        ContextGuard guard(this);
+        fn(m_renderer, defaultFramebufferObject());
+    }
     update();
     return true;
 }
@@ -177,9 +205,10 @@ void Viewport::cleanupGL()
     if (!m_glReady) {
         return;
     }
-    makeCurrent();
-    m_renderer.cleanup();
-    doneCurrent();
+    {
+        ContextGuard guard(this);
+        m_renderer.cleanup();
+    }
     m_glReady = false;
 }
 

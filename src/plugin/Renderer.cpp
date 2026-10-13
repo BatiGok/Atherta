@@ -311,6 +311,29 @@ void Renderer::draw(const DrawParams &p, GLuint targetFbo)
     glDisable(GL_CULL_FACE);
     glDisable(GL_BLEND);
 
+    if (p.showGrid) {
+        // Drawn first as a backdrop so it never covers the model being painted.
+        // Adaptive spacing like Blender: 1 m at a 10 m view distance.
+        const float scale = std::pow(10.0f, std::floor(std::log10(std::max(p.dist, 1e-3f))) - 1.0f);
+        const float extent = std::clamp(p.dist * 30.0f, 10.0f * scale, 9000.0f);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        m_gridProgram.bind();
+        setMat4(this, m_gridProgram, "uViewProj", p.viewProj);
+        m_gridProgram.setUniformValue("uCenter", p.pivot.x, p.pivot.y);
+        m_gridProgram.setUniformValue("uExtent", extent);
+        m_gridProgram.setUniformValue("uScale", scale);
+        glBindVertexArray(m_gridVao);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindVertexArray(0);
+        m_gridProgram.release();
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+    }
+
     if (hasMesh()) {
         m_meshProgram.bind();
         setMat4(this, m_meshProgram, "uViewProj", p.viewProj);
@@ -362,26 +385,6 @@ void Renderer::draw(const DrawParams &p, GLuint targetFbo)
 
         drawMesh();
         m_meshProgram.release();
-    }
-
-    if (p.showGrid) {
-        // Adaptive spacing like Blender: 1 m at a 10 m view distance.
-        const float scale = std::pow(10.0f, std::floor(std::log10(std::max(p.dist, 1e-3f))) - 1.0f);
-        const float extent = std::clamp(p.dist * 30.0f, 10.0f * scale, 9000.0f);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE);
-        m_gridProgram.bind();
-        setMat4(this, m_gridProgram, "uViewProj", p.viewProj);
-        m_gridProgram.setUniformValue("uCenter", p.pivot.x, p.pivot.y);
-        m_gridProgram.setUniformValue("uExtent", extent);
-        m_gridProgram.setUniformValue("uScale", scale);
-        glBindVertexArray(m_gridVao);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glBindVertexArray(0);
-        m_gridProgram.release();
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
     }
 }
 
@@ -465,6 +468,11 @@ bool Renderer::bakeStroke(const BakeParams &p, std::vector<uint8_t> &out, GLuint
     m_bakeProgram.setUniformValue("uNear", p.nearClip);
     m_bakeProgram.setUniformValue("uFar", p.farClip);
     m_bakeProgram.setUniformValue("uFadeStart", p.fadeStart);
+    // Projection [1][1] is 1 / tan(half fov) (perspective) or 1 / half height (ortho):
+    // one pixel spans 2 / (P11 * height) world units at depth 1 (or everywhere in ortho).
+    const float p11 = p.projection11 != 0.0f ? std::fabs(p.projection11) : 1.0f;
+    m_bakeProgram.setUniformValue("uPixelScale",
+                                  2.0f / (p11 * float(std::max(1, p.viewportDevice.height()))));
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_strokeTex);
     m_bakeProgram.setUniformValue("uStroke", 0);

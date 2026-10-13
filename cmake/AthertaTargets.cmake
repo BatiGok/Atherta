@@ -64,6 +64,18 @@ if(TARGET kritaui)
     target_link_libraries(kritaatherta3d kritaui atherta_core)
     install(TARGETS kritaatherta3d DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
     message(STATUS "Atherta: building the kritaatherta3d plugin")
+
+    # GL integration test (needs a display; see tests/gl/atherta_gl_test.cpp).
+    if(ATHERTA_BUILD_GL_TEST)
+        add_executable(atherta_gl_test
+            ${ATHERTA_SOURCE_DIR}/tests/gl/atherta_gl_test.cpp
+            ${_atherta_plugin}/Renderer.cpp
+            ${_atherta_plugin}/Viewport.cpp
+        )
+        set_target_properties(atherta_gl_test PROPERTIES AUTOMOC ON)
+        target_include_directories(atherta_gl_test PRIVATE ${_atherta_plugin})
+        target_link_libraries(atherta_gl_test kritaui atherta_core)
+    endif()
 elseif(DEFINED KRITA_VERSION_STRING)
     message(WARNING "Atherta: kritaui target not found, the plugin will not be built")
 endif()

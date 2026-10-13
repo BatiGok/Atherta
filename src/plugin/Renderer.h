@@ -57,6 +57,8 @@ public:
         float nearClip = 0.01f;
         float farClip = 1000.0f;
         float fadeStart = 0.2f;
+        /** Element [1][1] of the projection matrix (not view-projection). */
+        float projection11 = 1.0f;
         QSize viewportDevice;
         /** Texture area to bake, from textureRegionForScreenRect(). */
         atherta::IRect region;

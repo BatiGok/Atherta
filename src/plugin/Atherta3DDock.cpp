@@ -726,6 +726,7 @@ void Atherta3DDock::endStroke()
             params.nearClip = nav.nearClip();
             params.farClip = nav.farClip();
             params.fadeStart = m_fadeStart;
+            params.projection11 = nav.projectionMatrix().at(1, 1);
             params.viewportDevice = devSize;
             params.region = region;
             if (!r.bakeStroke(params, baked, fbo)) {
