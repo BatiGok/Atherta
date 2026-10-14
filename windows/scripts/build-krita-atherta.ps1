@@ -26,6 +26,11 @@ param(
     # drive root is not writable.
     [string]$BuildRoot = '',
     [string]$KritaBranch = 'krita/5.2',
+    # Atherta sources (folder containing cmake\KritaInject.cmake). Default:
+    # the KritaFiles package layout or the repository this script lives in.
+    [string]$AthertaSource = '',
+    # Where the log and krita-konumu.txt go. Default: the KritaFiles folder.
+    [string]$LogDir = '',
     [switch]$Clean
 )
 
@@ -34,8 +39,15 @@ $ProgressPreference = 'SilentlyContinue'   # makes Invoke-WebRequest much faster
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PackageDir = Split-Path -Parent $ScriptDir          # the KritaFiles folder
-$LogFile = Join-Path $PackageDir 'derleme-kaydi.txt'
+$PackageDir = Split-Path -Parent $ScriptDir          # the KritaFiles folder (or windows\ in the repo)
+if (-not $LogDir) { $LogDir = $PackageDir }
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+$LogFile = Join-Path $LogDir 'derleme-kaydi.txt'
+if (-not $AthertaSource) {
+    foreach ($candidate in @((Join-Path $PackageDir 'Atherta'), (Split-Path -Parent $PackageDir))) {
+        if (Test-Path (Join-Path $candidate 'cmake\KritaInject.cmake')) { $AthertaSource = $candidate; break }
+    }
+}
 
 # llvm-mingw 20240619 = LLVM 18.1.8, the compiler generation Krita 5.2 uses
 # on Windows (CI image "krita-windows-clang18").
@@ -320,6 +332,12 @@ try {
     $BuildRoot = Select-BuildRoot $BuildRoot
     Write-Host "   calisma klasoru: $BuildRoot"
 
+    # A running copy of the built Krita locks its files; replacing them would
+    # leave a half-deleted Krita behind.
+    $running = Get-Process -Name krita -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and $_.Path.StartsWith($BuildRoot, [StringComparison]::OrdinalIgnoreCase) }
+    if ($running) { Fail 'Derlenen Krita su an acik. Krita''yi kapatip tekrar deneyin.' }
+
     $drive = Split-Path -Qualifier $BuildRoot
     $free = (Get-PSDrive ($drive.TrimEnd(':'))).Free
     if ($free -lt 30GB) {
@@ -349,15 +367,17 @@ try {
 
     # --- 1. Sources ---------------------------------------------------------
     Step 'Atherta kaynaklari kopyalaniyor'
-    $AthertaSrc = Join-Path $PackageDir 'Atherta'
-    if (-not (Test-Path (Join-Path $AthertaSrc 'cmake\KritaInject.cmake'))) {
-        Fail "Atherta kaynaklari bulunamadi: $AthertaSrc"
+    if (-not $AthertaSource -or -not (Test-Path (Join-Path $AthertaSource 'cmake\KritaInject.cmake'))) {
+        Fail "Atherta kaynaklari bulunamadi: $AthertaSource"
     }
     if (Test-Path $Atherta) { Remove-Item -Recurse -Force $Atherta }
-    Copy-Item -Recurse -Path $AthertaSrc -Destination $Atherta
+    Copy-Item -Recurse -Path $AthertaSource -Destination $Atherta
 
+    # A clone interrupted by closing the window leaves a partial folder that
+    # makes the next clone fail; such folders are removed first.
     if (-not (Test-Path (Join-Path $Krita 'CMakeLists.txt'))) {
         Step "Krita kaynak kodu indiriliyor ($KritaBranch)"
+        if (Test-Path $Krita) { Remove-Item -Recurse -Force $Krita }
         Invoke-Checked git @('-c', 'core.longpaths=true', 'clone', '--depth', '1', '--branch', $KritaBranch,
                              'https://invent.kde.org/graphics/krita.git', $Krita) 'Krita indirme'
     } else {
@@ -367,11 +387,13 @@ try {
 
     if (-not (Test-Path 'krita-deps-management\tools')) {
         Step 'Krita bagimlilik araclari indiriliyor'
+        if (Test-Path 'krita-deps-management') { Remove-Item -Recurse -Force 'krita-deps-management' }
         Invoke-Checked git @('clone', '--depth', '1', '--branch', 'krita/5.2',
                              'https://invent.kde.org/packaging/krita-deps-management.git',
                              'krita-deps-management') 'krita-deps-management indirme'
     }
     if (-not (Test-Path 'krita-deps-management\ci-utilities\run-ci-build.py')) {
+        if (Test-Path 'krita-deps-management\ci-utilities') { Remove-Item -Recurse -Force 'krita-deps-management\ci-utilities' }
         Invoke-Checked git @('clone', '--depth', '1',
                              'https://invent.kde.org/packaging/krita-ci-utilities.git',
                              'krita-deps-management\ci-utilities') 'krita-ci-utilities indirme'
@@ -385,7 +407,14 @@ try {
         $pyArgs = @()
         if ($Python.Count -gt 1) { $pyArgs += $Python[1..($Python.Count - 1)] }
         Invoke-Checked $py ($pyArgs + @('-m', 'venv', 'venv', '--upgrade-deps')) 'venv olusturma'
+    }
+    # Separate marker so that a failed pip run (network, antivirus) is
+    # retried on the next run instead of leaving a venv without packages.
+    $PipMarker = Join-Path $Krita 'venv\.atherta-pip-ok'
+    if (-not (Test-Path $PipMarker)) {
+        Step 'Python paketleri kuruluyor (yalnizca bu klasore)'
         Invoke-Checked $VenvPy @('-m', 'pip', 'install', '-r', 'krita-deps-management\requirements.txt') 'pip install'
+        Set-Content -Path $PipMarker -Value (Get-Date)
     }
     Add-ToPath (Join-Path $Krita 'venv\Scripts')
 
@@ -480,13 +509,15 @@ try {
             Move-Item $pkg.FullName $Portable
             Write-Host "   tasinabilir Krita: $Portable" -ForegroundColor Green
         } else {
+            # Drop an older package so the fresh build in _install is started.
+            if (Test-Path $Portable) { Remove-Item -Recurse -Force $Portable }
             Write-Host '   UYARI: paketleme basarisiz; Krita dogrudan derleme klasorunden calistirilacak.' -ForegroundColor Yellow
         }
     } else {
         Write-Host '   7-Zip olmadigi icin paketleme atlandi; Krita derleme klasorunden calistirilacak.' -ForegroundColor Yellow
     }
 
-    Set-Content -Path (Join-Path $PackageDir 'krita-konumu.txt') -Value @(
+    Set-Content -Path (Join-Path $LogDir 'krita-konumu.txt') -Value @(
         "BuildRoot=$BuildRoot",
         "Portable=$Portable",
         "Install=$(Join-Path $Krita '_install')",
@@ -495,7 +526,7 @@ try {
 
     $elapsed = (Get-Date) - $started
     Write-Host ''
-    Write-Host ('BITTI ({0:hh\:mm} surdu). Simdi 2-Krita-Calistir.bat dosyasini calistirin.' -f $elapsed) -ForegroundColor Green
+    Write-Host ('BITTI ({0:hh\:mm} surdu).' -f $elapsed) -ForegroundColor Green
 }
 catch {
     Write-Host ''

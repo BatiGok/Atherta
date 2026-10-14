@@ -124,6 +124,15 @@ CMake 3.19 veya üstü gerekir.
 
 ### Windows
 
+En kolay yol tek bir dosya:
+[`windows/Atherta-Krita.bat`](windows/Atherta-Krita.bat). İçeriğini Not
+Defteri'ne yapıştırıp `.bat` olarak kaydetmek ve çift tıklamak yeterli.
+Bu dosya [`windows/bootstrap.ps1`](windows/bootstrap.ps1) betiğini ve
+eklentinin kaynak kodunu her çalıştırmada GitHub'dan en güncel haliyle indirir.
+Sonra aşağıdaki derlemeyi yapar ve Krita'yı açar. Kayıtlar ve örnek model
+masaüstündeki `KritaFiles` klasörüne yazılır. Krita derlendikten sonra aynı
+dosya Krita'yı doğrudan açar ya da isteğe göre yeniden derler.
+
 [`windows/`](windows/) klasöründe her şeyi otomatik yapan betikler var.
 Ayrıntılar [`windows/BENIOKU.txt`](windows/BENIOKU.txt) dosyasında.
 

@@ -25,8 +25,18 @@ Gerekenler
 - İnternet bağlantısı (birkaç GB indirilecek)
 - İlk derleme için 1-3 saat (bilgisayara göre değişir)
 
-Adımlar
--------
+Tek dosyayla (önerilen)
+-----------------------
+"Atherta-Krita.bat" dosyasına çift tıkla. Bu dosyanın içeriğini Not
+Defteri'ne yapıştırıp .bat olarak kaydedersen de aynı şekilde çalışır.
+- Eklentinin en güncel kaynak kodunu GitHub'dan indirir.
+- Aşağıdaki 1. adımı yapar ve Krita'yı açar.
+- Kayıtlar ve örnek model masaüstündeki "KritaFiles" klasörüne yazılır.
+- Sonraki çalıştırmalarda Enter Krita'yı açar, G eklentiyi güncelleyip
+  yeniden derler, T her şeyi silip baştan derler.
+
+Adımlar (klasördeki betiklerle)
+-------------------------------
 1) "1-Krita-ve-Eklentiyi-Derle.bat" dosyasına çift tıkla.
    - Eksik araçların taşınabilir kopyalarını indirir.
    - Krita 5.2 kaynak kodunu ve KDE'nin hazır Windows bağımlılıklarını indirir.
