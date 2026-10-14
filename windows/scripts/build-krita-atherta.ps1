@@ -123,6 +123,13 @@ try {
     if (-not $SevenZip -and (Test-Path "$env:ProgramFiles\7-Zip\7z.exe")) { $SevenZip = "$env:ProgramFiles\7-Zip\7z.exe" }
     if (-not $SevenZip) { Fail '7-Zip bulunamadi. 1-Gereksinimleri-Kur.bat dosyasini calistirin.' }
     $Python = Find-Python
+    # cmake_language(DEFER) in cmake/KritaInject.cmake needs CMake 3.19+.
+    $cmakeLine = (& cmake --version | Select-Object -First 1) -as [string]
+    if ($cmakeLine -match '(\d+)\.(\d+)') {
+        if ([int]$Matches[1] -lt 3 -or ([int]$Matches[1] -eq 3 -and [int]$Matches[2] -lt 19)) {
+            Fail "CMake 3.19 veya ustu gerekli (bulunan: $cmakeLine). Guncellemek icin: winget upgrade -e --id Kitware.CMake"
+        }
+    }
     Write-Host "   git:    $((Get-Command git).Source)"
     Write-Host "   cmake:  $((Get-Command cmake).Source)"
     Write-Host "   ninja:  $((Get-Command ninja).Source)"
