@@ -145,8 +145,8 @@ indirilir.
    - KDE'nin hazır Windows bağımlılıklarını indirir. Önce `krita/5.2`
      dalından yayımlanmış seti dener. Bu set yoksa Krita 5.2'nin CI'ının
      kullandığı `master` setine geçer. `master` paketleri 2026'da
-     güncellendiği için bu durumda `windows/krita-patches/` altındaki küçük
-     Krita yamaları uygulanır.
+     güncellendi; gerekirse Krita yamaları `windows/krita-patches/`
+     klasörüne konur ve yalnızca bu setle uygulanır.
    - CI'daki gibi Python 3.10 kullanır, böylece Krita'nın Python
      eklentileri de derlenir.
    - Bağımlılıklara uyan llvm-mingw (LLVM 18) derleyicisini seçer.
