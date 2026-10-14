@@ -127,15 +127,17 @@ CMake 3.19 veya üstü gerekir.
 [`windows/`](windows/) klasöründe her şeyi otomatik yapan betikler var.
 Ayrıntılar [`windows/BENIOKU.txt`](windows/BENIOKU.txt) dosyasında.
 
-1. `1-Gereksinimleri-Kur.bat`: winget ile Git, Python, CMake, Ninja ve 7-Zip'i
-   kurar.
-2. `2-Krita-ve-Eklentiyi-Derle.bat`: Krita'nın resmi CI düzenini
+Bilgisayara hiçbir şey kurulmaz ve yönetici izni gerekmez. Eksik araçlar
+(Git, Python, CMake, Ninja, 7-Zip) taşınabilir olarak çalışma klasörüne
+indirilir.
+
+1. `1-Krita-ve-Eklentiyi-Derle.bat`: Krita'nın resmi CI düzenini
    (`krita-deps-management` + `krita-ci-utilities`) izler:
    - KDE'nin hazır Windows bağımlılıklarını indirir.
    - Bağımlılıklara uyan llvm-mingw (LLVM 18) derleyicisini seçer.
    - Krita 5.2'yi eklentiyle derler.
    - Taşınabilir bir Krita klasörü üretir.
-3. `3-Krita-Calistir.bat`: Derlenen Krita'yı başlatır.
+2. `2-Krita-Calistir.bat`: Derlenen Krita'yı başlatır.
 
 Bu betikler Windows'ta henüz çalıştırılmadı. Eklentinin Qt'siz çekirdeği
 Windows için çapraz derlendi ve testleri Wine altında geçti.

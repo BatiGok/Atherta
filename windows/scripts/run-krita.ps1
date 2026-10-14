@@ -9,7 +9,7 @@ $PackageDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Pat
 $InfoFile = Join-Path $PackageDir 'krita-konumu.txt'
 
 if (-not (Test-Path $InfoFile)) {
-    Write-Host 'Krita henuz derlenmemis. Once 2-Krita-ve-Eklentiyi-Derle.bat dosyasini calistirin.' -ForegroundColor Red
+    Write-Host 'Krita henuz derlenmemis. Once 1-Krita-ve-Eklentiyi-Derle.bat dosyasini calistirin.' -ForegroundColor Red
     exit 1
 }
 

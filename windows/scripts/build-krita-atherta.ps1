@@ -3,7 +3,12 @@
 #
 # Builds Krita 5.2 with the Atherta 3D Paint plugin on Windows.
 #
-# It follows Krita's own CI (build-tools/ci-scripts/windows.yml):
+# Nothing is installed on the computer and no administrator rights are
+# needed: tools that are missing (Git, Python, CMake, Ninja, 7-Zip) are
+# downloaded as portable copies into the work folder and used from there.
+# Tools that already exist on the PATH are used as they are.
+#
+# The build follows Krita's own CI (build-tools/ci-scripts/windows.yml):
 #   1. clone Krita 5.2 and KDE's krita-deps-management / krita-ci-utilities
 #   2. download KDE's prebuilt Windows dependencies (Qt, KDE Frameworks, ...)
 #   3. pick the llvm-mingw (LLVM 18) toolchain matching those dependencies
@@ -16,8 +21,10 @@
 
 [CmdletBinding()]
 param(
-    # Must be a short path without spaces (Krita's build needs that).
-    [string]$BuildRoot = 'C:\KritaBuild',
+    # Work folder; must be a short path without spaces (Krita's build needs
+    # that). Default: C:\KritaBuild, or C:\Users\Public\KritaBuild when the
+    # drive root is not writable.
+    [string]$BuildRoot = '',
     [string]$KritaBranch = 'krita/5.2',
     [switch]$Clean
 )
@@ -33,6 +40,14 @@ $LogFile = Join-Path $PackageDir 'derleme-kaydi.txt'
 # llvm-mingw 20240619 = LLVM 18.1.8, the compiler generation Krita 5.2 uses
 # on Windows (CI image "krita-windows-clang18").
 $LlvmMingwVersion = '20240619'
+
+# Portable tools, used only when the tool is not already available.
+$PortableGitTag = 'v2.55.0.windows.5'
+$PortableGitFile = 'PortableGit-2.55.0.5-64-bit.7z.exe'
+$PythonNugetVersion = '3.12.10'
+$CMakeVersion = '3.31.12'
+$NinjaVersion = '1.12.1'
+$SevenZipVersion = '2409'
 
 function Step([string]$Message) {
     Write-Host ''
@@ -59,31 +74,95 @@ function Invoke-Checked {
     }
 }
 
+function Get-File([string]$Url, [string]$OutFile, [switch]$Optional) {
+    # Returns $true/$false only with -Optional; otherwise nothing (any value a
+    # PowerShell function emits becomes part of its caller's result).
+    Write-Host "   indiriliyor: $Url"
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
+            if ((Test-Path $OutFile) -and (Get-Item $OutFile).Length -gt 0) {
+                if ($Optional) { return $true }
+                return
+            }
+        } catch {
+            Write-Host "   deneme $attempt basarisiz: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+        Start-Sleep -Seconds (3 * $attempt)
+    }
+    if ($Optional) { return $false }
+    Fail "Indirilemedi: $Url"
+}
+
+function Expand-ZipFile([string]$Zip, [string]$Destination) {
+    # .NET's extractor is much faster than Expand-Archive on PowerShell 5.1.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    if (Test-Path $Destination) { Remove-Item -Recurse -Force $Destination }
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($Zip, $Destination)
+}
+
+function Add-ToPath([string]$Dir) {
+    $env:Path = "$Dir;$env:Path"
+}
+
 function Refresh-Path {
-    # Tools installed by winget only appear in new processes; read the
-    # registry so this window sees them too.
+    # Pick up tools installed earlier (e.g. by winget) that this window has
+    # not seen yet.
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user = [Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = "$machine;$user"
     $links = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'
-    if (Test-Path $links) { $env:Path = "$links;$env:Path" }
+    if (Test-Path $links) { Add-ToPath $links }
     foreach ($dir in @("$env:ProgramFiles\Git\cmd", "$env:ProgramFiles\CMake\bin", "$env:ProgramFiles\7-Zip")) {
-        if (Test-Path $dir) { $env:Path = "$dir;$env:Path" }
+        if (Test-Path $dir) { Add-ToPath $dir }
     }
 }
 
-function Require-Tool([string]$Name) {
-    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
-        Fail "'$Name' bulunamadi. Once 1-Gereksinimleri-Kur.bat dosyasini calistirin, sonra yeni bir pencerede tekrar deneyin."
+function Select-BuildRoot([string]$Requested) {
+    $candidates = @()
+    if ($Requested) { $candidates += $Requested }
+    else { $candidates += @("$env:SystemDrive\KritaBuild", "$env:SystemDrive\Users\Public\KritaBuild") }
+    foreach ($dir in $candidates) {
+        if ($dir -match '\s') {
+            Write-Host "   atlandi (bosluk iceriyor): $dir" -ForegroundColor Yellow
+            continue
+        }
+        try {
+            New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
+            $probe = Join-Path $dir '.yazma-testi'
+            Set-Content -Path $probe -Value 'ok' -ErrorAction Stop
+            Remove-Item $probe -ErrorAction SilentlyContinue
+            return $dir
+        } catch {
+            Write-Host "   yazilamiyor: $dir" -ForegroundColor Yellow
+        }
     }
+    Fail 'Yazilabilir, bosluk icermeyen bir calisma klasoru bulunamadi. -BuildRoot ile bir klasor verin (ornek: D:\KritaBuild).'
 }
 
-function Find-Python {
+function Ensure-Git([string]$Tools) {
+    if (Get-Command git -ErrorAction SilentlyContinue) { return }
+    $dir = Join-Path $Tools 'PortableGit'
+    if (-not (Test-Path (Join-Path $dir 'cmd\git.exe'))) {
+        Step 'Tasinabilir Git indiriliyor'
+        $sfx = Join-Path $Tools $PortableGitFile
+        Get-File "https://github.com/git-for-windows/git/releases/download/$PortableGitTag/$PortableGitFile" $sfx
+        # A 7-Zip self-extractor: -o<dir> -y extracts without questions. It is a
+        # GUI program, so wait for it explicitly.
+        $p = Start-Process -FilePath $sfx -ArgumentList @("-o$dir", '-y') -Wait -PassThru
+        if ($p.ExitCode -ne 0 -or -not (Test-Path (Join-Path $dir 'cmd\git.exe'))) {
+            Fail "Tasinabilir Git acilamadi (cikis kodu $($p.ExitCode))."
+        }
+        Remove-Item $sfx -ErrorAction SilentlyContinue
+    }
+    Add-ToPath (Join-Path $dir 'cmd')
+}
+
+function Find-SystemPython {
     # Probing writes to stderr when a version is missing; that must not stop
     # the script. Results are returned with a leading comma so PowerShell
     # does not unroll one-element arrays into a plain string.
     $ErrorActionPreference = 'Continue'
-    # Prefer the py launcher with a known-good version.
     if (Get-Command py -ErrorAction SilentlyContinue) {
         foreach ($v in @('3.12', '3.13', '3.11', '3.10')) {
             & py "-$v" -c "import sys" 2>$null | Out-Null
@@ -94,7 +173,126 @@ function Find-Python {
         $ver = & python -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
         if ($LASTEXITCODE -eq 0 -and "$ver" -match '^3\.(1[0-3])$') { return , @('python') }
     }
-    Fail 'Python 3.10 - 3.13 bulunamadi. 1-Gereksinimleri-Kur.bat ile Python 3.12 kurun.'
+    return $null
+}
+
+function Ensure-Python([string]$Tools) {
+    $system = Find-SystemPython
+    if ($system) { return , $system }
+    $dir = Join-Path $Tools 'python'
+    $exe = Join-Path $dir 'tools\python.exe'
+    if (-not (Test-Path $exe)) {
+        Step "Tasinabilir Python $PythonNugetVersion indiriliyor"
+        # The python.org NuGet package is a complete Python (with venv and pip)
+        # that runs without installation.
+        $pkg = Join-Path $Tools "python.$PythonNugetVersion.zip"
+        Get-File "https://api.nuget.org/v3-flatcontainer/python/$PythonNugetVersion/python.$PythonNugetVersion.nupkg" $pkg
+        Expand-ZipFile $pkg $dir
+        Remove-Item $pkg -ErrorAction SilentlyContinue
+        if (-not (Test-Path $exe)) { Fail "Tasinabilir Python acilamadi: $exe yok." }
+    }
+    return , @($exe)
+}
+
+function Test-CMakeVersion {
+    $ErrorActionPreference = 'Continue'
+    $line = (& cmake --version 2>$null | Select-Object -First 1) -as [string]
+    if ($line -match '(\d+)\.(\d+)') {
+        $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+        # cmake_language(DEFER) in cmake/KritaInject.cmake needs CMake 3.19+.
+        return ($major -gt 3) -or ($major -eq 3 -and $minor -ge 19)
+    }
+    return $false
+}
+
+function Ensure-CMake([string]$Tools) {
+    if ((Get-Command cmake -ErrorAction SilentlyContinue) -and (Test-CMakeVersion)) { return }
+    $name = "cmake-$CMakeVersion-windows-x86_64"
+    $dir = Join-Path $Tools $name
+    if (-not (Test-Path (Join-Path $dir 'bin\cmake.exe'))) {
+        Step "Tasinabilir CMake $CMakeVersion indiriliyor"
+        $zip = Join-Path $Tools "$name.zip"
+        Get-File "https://github.com/Kitware/CMake/releases/download/v$CMakeVersion/$name.zip" $zip
+        # The archive contains the $name folder itself.
+        $tmp = Join-Path $Tools 'cmake-unpack'
+        Expand-ZipFile $zip $tmp
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+        Move-Item (Join-Path $tmp $name) $dir
+        Remove-Item -Recurse -Force $tmp
+        Remove-Item $zip -ErrorAction SilentlyContinue
+    }
+    Add-ToPath (Join-Path $dir 'bin')
+}
+
+function Ensure-Ninja([string]$Tools) {
+    if (Get-Command ninja -ErrorAction SilentlyContinue) { return }
+    $dir = Join-Path $Tools 'ninja'
+    if (-not (Test-Path (Join-Path $dir 'ninja.exe'))) {
+        Step "Tasinabilir Ninja $NinjaVersion indiriliyor"
+        $zip = Join-Path $Tools 'ninja-win.zip'
+        Get-File "https://github.com/ninja-build/ninja/releases/download/v$NinjaVersion/ninja-win.zip" $zip
+        Expand-ZipFile $zip $dir
+        Remove-Item $zip -ErrorAction SilentlyContinue
+    }
+    Add-ToPath $dir
+}
+
+function Ensure-SevenZip([string]$Tools) {
+    # Only the final packaging step needs 7-Zip. When it cannot be found or
+    # downloaded, packaging is skipped and Krita runs from the build folder.
+    foreach ($candidate in @((Get-Command 7z -ErrorAction SilentlyContinue).Source,
+                             "$env:ProgramFiles\7-Zip\7z.exe",
+                             "${env:ProgramFiles(x86)}\7-Zip\7z.exe",
+                             (Join-Path $Tools '7zip\7za.exe'))) {
+        if ($candidate -and (Test-Path $candidate)) {
+            Add-ToPath (Split-Path -Parent $candidate)
+            return $candidate
+        }
+    }
+    Step '7-Zip (tasinabilir) indiriliyor'
+    $dir = Join-Path $Tools '7zip'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $sevenZr = Join-Path $dir '7zr.exe'
+    $extra = Join-Path $dir "7z$SevenZipVersion-extra.7z"
+    if ((Get-File 'https://www.7-zip.org/a/7zr.exe' $sevenZr -Optional) -and
+        (Get-File "https://www.7-zip.org/a/7z$SevenZipVersion-extra.7z" $extra -Optional)) {
+        # 7zr.exe only reads .7z archives; it unpacks the full 7za.exe.
+        $ErrorActionPreference = 'Continue'
+        & $sevenZr x $extra "-o$dir" -y 2>&1 | Out-Null
+        Remove-Item $extra -ErrorAction SilentlyContinue
+        $exe = Join-Path $dir '7za.exe'
+        if (Test-Path $exe) {
+            Add-ToPath $dir
+            return $exe
+        }
+    }
+    Write-Host '   UYARI: 7-Zip hazirlanamadi; paketleme atlanacak (derleme icin gerekli degil).' -ForegroundColor Yellow
+    return $null
+}
+
+function Disable-QuickEdit {
+    # In a classic console window a single click starts "QuickEdit" selection,
+    # which blocks all console output and with it the whole build until Esc is
+    # pressed. Switch it off for this window.
+    try {
+        Add-Type -Namespace Atherta -Name NativeConsole -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern System.IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool GetConsoleMode(System.IntPtr hConsoleHandle, out uint lpMode);
+[DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetConsoleMode(System.IntPtr hConsoleHandle, uint dwMode);
+'@
+        $handle = [Atherta.NativeConsole]::GetStdHandle(-10)   # STD_INPUT_HANDLE
+        $mode = [uint32]0
+        if ([Atherta.NativeConsole]::GetConsoleMode($handle, [ref]$mode)) {
+            # Clear ENABLE_QUICK_EDIT_MODE (0x40), keep ENABLE_EXTENDED_FLAGS (0x80).
+            $newMode = [uint32](([int64]$mode -band 0xFFFFFFBFL) -bor 0x80)
+            [void][Atherta.NativeConsole]::SetConsoleMode($handle, $newMode)
+        }
+    } catch {
+        # Not a classic console (e.g. Windows Terminal): nothing to do.
+    }
 }
 
 function Get-CrtFlavor([string]$Dll) {
@@ -105,36 +303,22 @@ function Get-CrtFlavor([string]$Dll) {
     Fail "C calisma zamani tespit edilemedi: $Dll"
 }
 
+Disable-QuickEdit
 Start-Transcript -Path $LogFile -Append | Out-Null
 try {
     $started = Get-Date
     Write-Host '============================================================'
     Write-Host ' Atherta 3D Paint - Krita 5.2 derlemesi'
-    Write-Host " Calisma klasoru: $BuildRoot"
+    Write-Host ' Bilgisayara hicbir sey kurulmaz; eksik araclar tasinabilir'
+    Write-Host ' olarak calisma klasorune indirilir.'
     Write-Host ' Ilk calistirma internet hizina ve bilgisayara gore 1-3 saat surer.'
     Write-Host '============================================================'
 
-    # --- 0. Checks ---------------------------------------------------------
-    Step 'Araclar kontrol ediliyor'
+    # --- 0. Work folder and tools -------------------------------------------
+    Step 'Calisma klasoru ve araclar hazirlaniyor'
     Refresh-Path
-    if ($BuildRoot -match '\s') { Fail "Calisma klasoru bosluk iceremez: $BuildRoot" }
-    foreach ($tool in @('git', 'cmake', 'ninja')) { Require-Tool $tool }
-    $SevenZip = (Get-Command 7z -ErrorAction SilentlyContinue).Source
-    if (-not $SevenZip -and (Test-Path "$env:ProgramFiles\7-Zip\7z.exe")) { $SevenZip = "$env:ProgramFiles\7-Zip\7z.exe" }
-    if (-not $SevenZip) { Fail '7-Zip bulunamadi. 1-Gereksinimleri-Kur.bat dosyasini calistirin.' }
-    $Python = Find-Python
-    # cmake_language(DEFER) in cmake/KritaInject.cmake needs CMake 3.19+.
-    $cmakeLine = (& cmake --version | Select-Object -First 1) -as [string]
-    if ($cmakeLine -match '(\d+)\.(\d+)') {
-        if ([int]$Matches[1] -lt 3 -or ([int]$Matches[1] -eq 3 -and [int]$Matches[2] -lt 19)) {
-            Fail "CMake 3.19 veya ustu gerekli (bulunan: $cmakeLine). Guncellemek icin: winget upgrade -e --id Kitware.CMake"
-        }
-    }
-    Write-Host "   git:    $((Get-Command git).Source)"
-    Write-Host "   cmake:  $((Get-Command cmake).Source)"
-    Write-Host "   ninja:  $((Get-Command ninja).Source)"
-    Write-Host "   python: $($Python -join ' ')"
-    Write-Host "   7-Zip:  $SevenZip"
+    $BuildRoot = Select-BuildRoot $BuildRoot
+    Write-Host "   calisma klasoru: $BuildRoot"
 
     $drive = Split-Path -Qualifier $BuildRoot
     $free = (Get-PSDrive ($drive.TrimEnd(':'))).Free
@@ -145,12 +329,23 @@ try {
     if ($Clean -and (Test-Path $BuildRoot)) {
         Step "Eski derleme siliniyor: $BuildRoot"
         Remove-Item -Recurse -Force $BuildRoot
+        New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
     }
-    New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
     $Krita = Join-Path $BuildRoot 'krita'
     $Atherta = Join-Path $BuildRoot 'Atherta'
     $Tools = Join-Path $BuildRoot 'tools'
     New-Item -ItemType Directory -Force -Path $Tools | Out-Null
+
+    Ensure-Git $Tools
+    $Python = Ensure-Python $Tools
+    Ensure-CMake $Tools
+    Ensure-Ninja $Tools
+    $SevenZip = Ensure-SevenZip $Tools
+    Write-Host "   git:    $((Get-Command git).Source)"
+    Write-Host "   python: $($Python -join ' ')"
+    Write-Host "   cmake:  $((Get-Command cmake).Source)"
+    Write-Host "   ninja:  $((Get-Command ninja).Source)"
+    Write-Host "   7-Zip:  $(if ($SevenZip) { $SevenZip } else { 'yok (paketleme atlanacak)' })"
 
     # --- 1. Sources ---------------------------------------------------------
     Step 'Atherta kaynaklari kopyalaniyor'
@@ -161,11 +356,9 @@ try {
     if (Test-Path $Atherta) { Remove-Item -Recurse -Force $Atherta }
     Copy-Item -Recurse -Path $AthertaSrc -Destination $Atherta
 
-    git config --global core.longpaths true | Out-Null
-
     if (-not (Test-Path (Join-Path $Krita 'CMakeLists.txt'))) {
         Step "Krita kaynak kodu indiriliyor ($KritaBranch)"
-        Invoke-Checked git @('clone', '--depth', '1', '--branch', $KritaBranch,
+        Invoke-Checked git @('-c', 'core.longpaths=true', 'clone', '--depth', '1', '--branch', $KritaBranch,
                              'https://invent.kde.org/graphics/krita.git', $Krita) 'Krita indirme'
     } else {
         Step 'Krita kaynak kodu zaten var'
@@ -194,7 +387,7 @@ try {
         Invoke-Checked $py ($pyArgs + @('-m', 'venv', 'venv', '--upgrade-deps')) 'venv olusturma'
         Invoke-Checked $VenvPy @('-m', 'pip', 'install', '-r', 'krita-deps-management\requirements.txt') 'pip install'
     }
-    $env:Path = "$(Join-Path $Krita 'venv\Scripts');$env:Path"
+    Add-ToPath (Join-Path $Krita 'venv\Scripts')
 
     # --- 3. Dependency list (as on CI) -------------------------------------
     Step 'Bagimlilik listesi hazirlaniyor'
@@ -243,13 +436,16 @@ try {
     Step "Derleyici: $LlvmName (bagimliliklar $Crt ile derlenmis)"
     if (-not (Test-Path (Join-Path $LlvmDir 'bin\clang++.exe'))) {
         $zip = Join-Path $Tools "$LlvmName.zip"
-        $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$LlvmMingwVersion/$LlvmName.zip"
-        Write-Host "   indiriliyor: $url"
-        Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-        Invoke-Checked $SevenZip @('x', $zip, "-o$Tools", '-y', '-bso0', '-bsp0') 'derleyici acma'
-        Remove-Item $zip
+        Get-File "https://github.com/mstorsjo/llvm-mingw/releases/download/$LlvmMingwVersion/$LlvmName.zip" $zip
+        # The archive contains the $LlvmName folder itself.
+        $tmp = Join-Path $Tools 'llvm-unpack'
+        Expand-ZipFile $zip $tmp
+        if (Test-Path $LlvmDir) { Remove-Item -Recurse -Force $LlvmDir }
+        Move-Item (Join-Path $tmp $LlvmName) $LlvmDir
+        Remove-Item -Recurse -Force $tmp
+        Remove-Item $zip -ErrorAction SilentlyContinue
     }
-    $env:Path = "$(Join-Path $LlvmDir 'bin');$env:Path"
+    Add-ToPath (Join-Path $LlvmDir 'bin')
     $env:MINGW_BIN_DIR = Join-Path $LlvmDir 'bin'
     Invoke-Checked 'clang++' @('--version') 'derleyici kontrolu'
 
@@ -264,25 +460,30 @@ try {
     Write-Host "   eklenti: $Plugin" -ForegroundColor Green
 
     # --- 7. Portable package -----------------------------------------------
-    Step 'Tasinabilir Krita klasoru olusturuluyor'
-    $env:CI_COMMIT_SHORT_SHA = 'atherta'
-    $env:KRITACI_SKIP_DEBUG_PACKAGE = 'True'
-    Get-ChildItem -Path $Krita -Filter 'krita-x64-*-atherta*' -ErrorAction SilentlyContinue |
-        ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
-    $ErrorActionPreference = 'Continue'
-    & $VenvPy -u 'build-tools\ci-scripts\build-windows-package.py' --skip-debug-package 2>&1 |
-        ForEach-Object { Write-Host "$_" }
-    $packageExit = $LASTEXITCODE
-    $ErrorActionPreference = 'Stop'
     $Portable = Join-Path $BuildRoot 'Krita-Atherta'
-    $pkg = Get-ChildItem -Path $Krita -Directory -Filter 'krita-x64-*-atherta' -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($packageExit -eq 0 -and $pkg -and (Test-Path (Join-Path $pkg.FullName 'bin\krita.exe'))) {
-        if (Test-Path $Portable) { Remove-Item -Recurse -Force $Portable }
-        Move-Item $pkg.FullName $Portable
-        Write-Host "   tasinabilir Krita: $Portable" -ForegroundColor Green
+    if ($SevenZip) {
+        Step 'Tasinabilir Krita klasoru olusturuluyor'
+        $env:CI_COMMIT_SHORT_SHA = 'atherta'
+        $env:KRITACI_SKIP_DEBUG_PACKAGE = 'True'
+        $env:SEVENZIP_EXE = $SevenZip
+        Get-ChildItem -Path $Krita -Filter 'krita-x64-*-atherta*' -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
+        $ErrorActionPreference = 'Continue'
+        & $VenvPy -u 'build-tools\ci-scripts\build-windows-package.py' --skip-debug-package 2>&1 |
+            ForEach-Object { Write-Host "$_" }
+        $packageExit = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        $pkg = Get-ChildItem -Path $Krita -Directory -Filter 'krita-x64-*-atherta' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($packageExit -eq 0 -and $pkg -and (Test-Path (Join-Path $pkg.FullName 'bin\krita.exe'))) {
+            if (Test-Path $Portable) { Remove-Item -Recurse -Force $Portable }
+            Move-Item $pkg.FullName $Portable
+            Write-Host "   tasinabilir Krita: $Portable" -ForegroundColor Green
+        } else {
+            Write-Host '   UYARI: paketleme basarisiz; Krita dogrudan derleme klasorunden calistirilacak.' -ForegroundColor Yellow
+        }
     } else {
-        Write-Host '   UYARI: paketleme basarisiz; Krita dogrudan derleme klasorunden calistirilacak.' -ForegroundColor Yellow
+        Write-Host '   7-Zip olmadigi icin paketleme atlandi; Krita derleme klasorunden calistirilacak.' -ForegroundColor Yellow
     }
 
     Set-Content -Path (Join-Path $PackageDir 'krita-konumu.txt') -Value @(
@@ -294,7 +495,7 @@ try {
 
     $elapsed = (Get-Date) - $started
     Write-Host ''
-    Write-Host ('BITTI ({0:hh\:mm} surdu). Simdi 3-Krita-Calistir.bat dosyasini calistirin.' -f $elapsed) -ForegroundColor Green
+    Write-Host ('BITTI ({0:hh\:mm} surdu). Simdi 2-Krita-Calistir.bat dosyasini calistirin.' -f $elapsed) -ForegroundColor Green
 }
 catch {
     Write-Host ''
