@@ -371,7 +371,7 @@ void Viewport::finishAltDrag(const QPointF &pos)
     // Blender: Alt+MMB click-drag towards a direction selects an axis view.
     const QPointF d = pos - m_pressPos;
     // Angle with Y pointing up, 0 = east, counter clockwise.
-    const qreal angle = std::atan2(-d.y(), d.x()) * 180.0 / M_PI;
+    const qreal angle = rad2deg(float(std::atan2(-d.y(), d.x())));
     const int sector = (qRound(angle / 45.0) + 8) % 8; // 0 E, 1 NE, 2 N, 3 NW, 4 W, 5 SW, 6 S, 7 SE
     AxisView view = AxisView::User;
     switch (sector) {

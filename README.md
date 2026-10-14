@@ -124,12 +124,25 @@ CMake 3.19 veya üstü gerekir.
 
 ### Windows
 
-1. Krita'nın resmi rehberini izleyip **`krita/5.2` dalını** derle:
-   https://docs.krita.org/en/untranslatable_pages/building_krita.html
-2. Krita'nın CMake yapılandırma komutuna yukarıdaki parametreyi ekle:
-   `-DCMAKE_PROJECT_krita_INCLUDE=C:/yol/Atherta/cmake/KritaInject.cmake`
-3. Derle ve kur (`ninja install`). Eklenti `lib/kritaplugins/kritaatherta3d.dll`
-   olarak kurulur ve o Krita derlemesinde çalışır.
+[`windows/`](windows/) klasöründe her şeyi otomatik yapan betikler var.
+Ayrıntılar [`windows/BENIOKU.txt`](windows/BENIOKU.txt) dosyasında.
+
+1. `1-Gereksinimleri-Kur.bat`: winget ile Git, Python, CMake, Ninja ve 7-Zip'i
+   kurar.
+2. `2-Krita-ve-Eklentiyi-Derle.bat`: Krita'nın resmi CI düzenini
+   (`krita-deps-management` + `krita-ci-utilities`) izler:
+   - KDE'nin hazır Windows bağımlılıklarını indirir.
+   - Bağımlılıklara uyan llvm-mingw (LLVM 18) derleyicisini seçer.
+   - Krita 5.2'yi eklentiyle derler.
+   - Taşınabilir bir Krita klasörü üretir.
+3. `3-Krita-Calistir.bat`: Derlenen Krita'yı başlatır.
+
+Bu betikler Windows'ta henüz çalıştırılmadı. Eklentinin Qt'siz çekirdeği
+Windows için çapraz derlendi ve testleri Wine altında geçti.
+
+Elle derlemek istersen, Krita'nın CMake yapılandırma komutuna
+`-DCMAKE_PROJECT_krita_INCLUDE=C:/yol/Atherta/cmake/KritaInject.cmake`
+eklemen yeterli. Eklenti `lib/kritaplugins/kritaatherta3d.dll` olarak kurulur.
 
 Eklentiyi resmi Krita 5.2 kurulumuna kopyalamak, ancak tamamen aynı sürüm,
 derleyici ve bağımlılıklarla derlendiğinde çalışabilir. Bu denenmedi; kendi
