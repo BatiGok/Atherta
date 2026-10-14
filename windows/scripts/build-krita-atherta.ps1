@@ -49,9 +49,12 @@ if (-not $AthertaSource) {
     }
 }
 
-# llvm-mingw 20240619 = LLVM 18.1.8, the compiler generation Krita 5.2 uses
-# on Windows (CI image "krita-windows-clang18").
-$LlvmMingwVersion = '20240619'
+# The compiler must match the one the dependency packages were built with
+# (their static libraries and DLLs need its libc++): llvm-mingw 20240619 =
+# LLVM 18.1.8 for the krita/5.2 set (CI image krita-windows-clang18),
+# llvm-mingw 20251216 = LLVM 21.1.8 for the 2026 'master' set (CI image
+# krita-windows-clang21).
+$LlvmMingwVersions = @{ 'krita/5.2' = '20240619'; 'master' = '20251216' }
 
 # Portable tools, used only when the tool is not already available.
 $PortableGitTag = 'v2.55.0.windows.5'
@@ -643,6 +646,7 @@ try {
     $QtCore = Join-Path $Krita '_install\bin\Qt5Core.dll'
     if (-not (Test-Path $QtCore)) { Fail "Bagimliliklar eksik gorunuyor ($QtCore yok). -Clean ile tekrar deneyin." }
     $Crt = Get-CrtFlavor $QtCore
+    $LlvmMingwVersion = $LlvmMingwVersions[$DepsBranch]
     $LlvmName = "llvm-mingw-$LlvmMingwVersion-$Crt-x86_64"
     $LlvmDir = Join-Path $Tools $LlvmName
     Step "Derleyici: $LlvmName (bagimliliklar $Crt ile derlenmis)"
@@ -657,6 +661,15 @@ try {
         Remove-Item -Recurse -Force $tmp
         Remove-Item $zip -ErrorAction SilentlyContinue
     }
+    # A build folder configured with another compiler cannot be reused.
+    $ToolchainMarker = Join-Path $Krita '.atherta-toolchain'
+    $BuildDir = Join-Path $Krita '_build'
+    $previous = if (Test-Path $ToolchainMarker) { "$(Get-Content $ToolchainMarker -TotalCount 1)".Trim() } else { '' }
+    if ($previous -ne $LlvmName -and (Test-Path $BuildDir)) {
+        Write-Host "   derleyici degisti; eski derleme klasoru siliniyor: $BuildDir" -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $BuildDir
+    }
+    Set-Content -Path $ToolchainMarker -Value $LlvmName
     Add-ToPath (Join-Path $LlvmDir 'bin')
     $env:MINGW_BIN_DIR = Join-Path $LlvmDir 'bin'
     Invoke-Checked 'clang++' @('--version') 'derleyici kontrolu'
@@ -670,7 +683,6 @@ try {
     Write-Host "   Derleyici uyarilari yalnizca $DetailLog dosyasina yazilir." -ForegroundColor DarkGray
     $code = Invoke-Build $VenvPy (@('-u', $RunCi) + $CiArgs + @('--skip-publishing', '--skip-dependencies-fetch')) $DetailLog
     if ($code -ne 0) {
-        $BuildDir = Join-Path $Krita '_build'
         if (Test-Path (Join-Path $BuildDir 'build.ninja')) {
             # One more pass that does not stop at the first error, so that a
             # single run reports every file that fails to compile.
