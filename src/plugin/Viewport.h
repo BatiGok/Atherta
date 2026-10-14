@@ -5,9 +5,9 @@
 
 #pragma once
 
-#include "MeshBvh.h"
+#include "core/MeshBvh.h"
 #include "Renderer.h"
-#include "ViewNavigator.h"
+#include "core/ViewNavigator.h"
 
 #include <QElapsedTimer>
 #include <QOpenGLWidget>

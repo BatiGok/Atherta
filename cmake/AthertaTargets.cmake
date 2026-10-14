@@ -43,7 +43,11 @@ add_library(atherta_core STATIC
     ${_atherta_core}/GutterDilation.cpp
     ${_atherta_core}/StrokeRegion.cpp
 )
-target_include_directories(atherta_core PUBLIC ${_atherta_core})
+# Only src/ is put on the include path and headers are included as
+# "core/Mesh.h": generic names like Mesh.h must never be found by a bare
+# #include from system or library headers (Windows file names are
+# case-insensitive, so a Math.h here would replace <math.h>).
+target_include_directories(atherta_core PUBLIC ${ATHERTA_SOURCE_DIR}/src)
 target_compile_features(atherta_core PUBLIC cxx_std_17)
 target_link_libraries(atherta_core PRIVATE atherta_thirdparty)
 # Linked into the Krita plugin, which is a shared module.
@@ -60,7 +64,6 @@ if(TARGET kritaui)
         ${_atherta_plugin}/Viewport.cpp
     )
     set_target_properties(kritaatherta3d PROPERTIES AUTOMOC ON)
-    target_include_directories(kritaatherta3d PRIVATE ${_atherta_plugin})
     target_link_libraries(kritaatherta3d kritaui atherta_core)
     install(TARGETS kritaatherta3d DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
     message(STATUS "Atherta: building the kritaatherta3d plugin")
@@ -73,7 +76,6 @@ if(TARGET kritaui)
             ${_atherta_plugin}/Viewport.cpp
         )
         set_target_properties(atherta_gl_test PROPERTIES AUTOMOC ON)
-        target_include_directories(atherta_gl_test PRIVATE ${_atherta_plugin})
         target_link_libraries(atherta_gl_test kritaui atherta_core)
     endif()
 elseif(DEFINED KRITA_VERSION_STRING)

@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "Math.h"
+#include "AthertaMath.h"
 
 namespace atherta {
 

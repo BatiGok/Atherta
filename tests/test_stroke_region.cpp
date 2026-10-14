@@ -5,8 +5,8 @@
 
 #include "doctest.h"
 
-#include "StrokeRegion.h"
-#include "ViewNavigator.h"
+#include "core/StrokeRegion.h"
+#include "core/ViewNavigator.h"
 
 using namespace atherta;
 

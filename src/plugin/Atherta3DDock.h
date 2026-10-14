@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "Mesh.h"
-#include "MeshBvh.h"
+#include "core/Mesh.h"
+#include "core/MeshBvh.h"
 #include "TextureSet.h"
 #include "Viewport.h"
 

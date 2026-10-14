@@ -5,8 +5,8 @@
 
 #include "doctest.h"
 
-#include "Mesh.h"
-#include "MeshBvh.h"
+#include "core/Mesh.h"
+#include "core/MeshBvh.h"
 
 #include <cstdio>
 #include <cstdlib>

@@ -142,8 +142,16 @@ indirilir.
 
 1. `1-Krita-ve-Eklentiyi-Derle.bat`: Krita'nın resmi CI düzenini
    (`krita-deps-management` + `krita-ci-utilities`) izler:
-   - KDE'nin hazır Windows bağımlılıklarını indirir.
+   - KDE'nin hazır Windows bağımlılıklarını indirir. Önce `krita/5.2`
+     dalından yayımlanmış seti dener. Bu set yoksa Krita 5.2'nin CI'ının
+     kullandığı `master` setine geçer. `master` paketleri 2026'da
+     güncellendiği için bu durumda `windows/krita-patches/` altındaki küçük
+     Krita yamaları uygulanır.
+   - CI'daki gibi Python 3.10 kullanır, böylece Krita'nın Python
+     eklentileri de derlenir.
    - Bağımlılıklara uyan llvm-mingw (LLVM 18) derleyicisini seçer.
+   - Bir hata çıkarsa derlemeyi sürdürür ve bütün hataları
+     `derleme-kaydi.txt` dosyasına toplar.
    - Krita 5.2'yi eklentiyle derler.
    - Taşınabilir bir Krita klasörü üretir.
 2. `2-Krita-Calistir.bat`: Derlenen Krita'yı başlatır.

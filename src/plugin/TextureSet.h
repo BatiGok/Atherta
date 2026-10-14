@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "Channels.h"
+#include "core/Channels.h"
 
 #include <QImage>
 #include <QRect>

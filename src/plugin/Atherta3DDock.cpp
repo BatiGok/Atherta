@@ -5,8 +5,8 @@
 
 #include "Atherta3DDock.h"
 
-#include "GutterDilation.h"
-#include "StrokeRegion.h"
+#include "core/GutterDilation.h"
+#include "core/StrokeRegion.h"
 #include "StrokeSession.h"
 
 #include <KisDocument.h>

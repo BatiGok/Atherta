@@ -80,8 +80,11 @@ Krita açılınca
 
 Sorun olursa
 ------------
-- Her çalıştırmanın tam kaydı "derleme-kaydi.txt" dosyasına yazılır.
-  Bir hata olursa bu dosyayı paylaş, sorunu oradan bulup düzeltelim.
+- Her çalıştırmanın kaydı "derleme-kaydi.txt" dosyasına yazılır. Bir hata
+  olursa bu dosyayı paylaş, sorunu oradan bulup düzeltelim. Derleme hata
+  verirse betik derlemeyi durdurmaz; kalan her şeyi derleyip bütün hataları
+  bu kayda yazar. Derleyicinin tam çıktısı (uyarılar dahil) ayrıca
+  "derleme-ayrinti.txt" dosyasında durur.
 - Her şeyi baştan yapmak için bu klasörde bir komut penceresi aç ve şunu çalıştır:
     powershell -ExecutionPolicy Bypass -File scripts\build-krita-atherta.ps1 -Clean
 - Başka bir disk kullanmak için (örnek D:):

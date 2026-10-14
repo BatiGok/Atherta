@@ -6,7 +6,7 @@
 #pragma once
 
 #include "GutterDilation.h"
-#include "Math.h"
+#include "AthertaMath.h"
 #include "Mesh.h"
 
 namespace atherta {

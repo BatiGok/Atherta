@@ -5,10 +5,10 @@
 
 #pragma once
 
-#include "Channels.h"
-#include "GutterDilation.h"
-#include "Math.h"
-#include "Mesh.h"
+#include "core/Channels.h"
+#include "core/GutterDilation.h"
+#include "core/AthertaMath.h"
+#include "core/Mesh.h"
 
 #include <QImage>
 #include <QOpenGLExtraFunctions>

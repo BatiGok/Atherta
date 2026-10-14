@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "Math.h"
+#include "AthertaMath.h"
 #include "Mesh.h"
 
 #include <cstdint>

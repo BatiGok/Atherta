@@ -12,10 +12,10 @@
  * lands on the visible texels only.
  */
 
-#include "GutterDilation.h"
-#include "MeshBvh.h"
-#include "StrokeRegion.h"
-#include "Viewport.h"
+#include "core/GutterDilation.h"
+#include "core/MeshBvh.h"
+#include "core/StrokeRegion.h"
+#include "plugin/Viewport.h"
 
 #include <QApplication>
 #include <QDir>

@@ -7,7 +7,7 @@
 
 #include "doctest.h"
 
-#include "ViewNavigator.h"
+#include "core/ViewNavigator.h"
 
 using namespace atherta;
 using doctest::Approx;

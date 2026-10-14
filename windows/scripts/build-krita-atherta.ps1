@@ -56,7 +56,7 @@ $LlvmMingwVersion = '20240619'
 # Portable tools, used only when the tool is not already available.
 $PortableGitTag = 'v2.55.0.windows.5'
 $PortableGitFile = 'PortableGit-2.55.0.5-64-bit.7z.exe'
-$PythonNugetVersion = '3.12.10'
+$PythonNugetVersion = '3.10.7'   # same as the Python in Krita 5.2's packages
 $CMakeVersion = '3.31.12'
 $NinjaVersion = '1.12.1'
 $SevenZipVersion = '2409'
@@ -73,17 +73,74 @@ function Fail([string]$Message) {
     throw $Message
 }
 
+function Format-NativeLine($Item) {
+    # Lines a program writes to stderr arrive as ErrorRecords; an empty one
+    # would print as "System.Management.Automation.RemoteException".
+    $text = "$Item"
+    if ($text -eq 'System.Management.Automation.RemoteException') { return '' }
+    return $text
+}
+
+function Invoke-Logged {
+    # Runs a program, routes its output (stdout and stderr) through
+    # PowerShell so that it lands in the transcript log, and returns the exit
+    # code. stderr lines must not abort the script.
+    param([string]$Exe, [string[]]$Arguments)
+    Write-Host "   > $Exe $($Arguments -join ' ')" -ForegroundColor DarkGray
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1   # stays when the program cannot be started
+    & $Exe @Arguments 2>&1 | ForEach-Object { Write-Host (Format-NativeLine $_) }
+    return $LASTEXITCODE
+}
+
 function Invoke-Checked {
     param([string]$Exe, [string[]]$Arguments, [string]$What)
-    Write-Host "   > $Exe $($Arguments -join ' ')" -ForegroundColor DarkGray
-    # Route the program's output (stdout and stderr) through PowerShell so it
-    # lands in the transcript log; stderr lines must not abort the script.
-    $ErrorActionPreference = 'Continue'
-    & $Exe @Arguments 2>&1 | ForEach-Object { Write-Host "$_" }
-    $code = $LASTEXITCODE
+    $code = Invoke-Logged $Exe $Arguments
     if ($code -ne 0) {
         Fail "$What basarisiz oldu (cikis kodu $code)."
     }
+}
+
+function Invoke-Build {
+    # Runs the long build. Everything goes to $DetailLog; the window and the
+    # main log only get progress, errors (with a few lines of context) and
+    # the messages of KDE's CI script, so that the main log stays small.
+    param([string]$Exe, [string[]]$Arguments, [string]$DetailLog)
+    Write-Host "   > $Exe $($Arguments -join ' ')" -ForegroundColor DarkGray
+    $writer = New-Object System.IO.StreamWriter($DetailLog, $true, (New-Object System.Text.UTF8Encoding($false)))
+    $context = @{ Lines = 0 }
+    try {
+        $ErrorActionPreference = 'Continue'
+        $global:LASTEXITCODE = -1
+        & $Exe @Arguments 2>&1 | ForEach-Object {
+            $line = Format-NativeLine $_
+            $writer.WriteLine($line)
+            if ($line -match '^\[\d+/\d+\] ') {
+                $context.Lines = 0
+                Write-Host $line
+            } elseif ($line -match '(^FAILED:|\berror:|^ninja: |^CMake Error|^## |^-- )') {
+                # Keep the lines that follow an error: code excerpt, notes.
+                $context.Lines = if ($line -match '(^FAILED:|\berror:)') { 12 } else { 0 }
+                Write-Host $line
+            } elseif ($context.Lines -gt 0) {
+                $context.Lines--
+                Write-Host $line
+            }
+        }
+        $code = $LASTEXITCODE
+    } finally {
+        $writer.Close()
+    }
+    return $code
+}
+
+function Show-BuildErrors([string]$DetailLog) {
+    # Short summary at the end of the main log: the files that failed.
+    $failed = Select-String -Path $DetailLog -Pattern '^FAILED: (?:\[code=\d+\] )?(.*)$' |
+        ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
+    Write-Host ''
+    Write-Host "Derlenemeyen dosyalar ($(@($failed).Count)):" -ForegroundColor Red
+    $failed | Select-Object -First 200 | ForEach-Object { Write-Host "   $_" -ForegroundColor Red }
 }
 
 function Get-File([string]$Url, [string]$OutFile, [switch]$Optional) {
@@ -170,40 +227,130 @@ function Ensure-Git([string]$Tools) {
     Add-ToPath (Join-Path $dir 'cmd')
 }
 
-function Find-SystemPython {
+function Find-SystemPython([string[]]$Versions) {
     # Probing writes to stderr when a version is missing; that must not stop
-    # the script. Results are returned with a leading comma so PowerShell
-    # does not unroll one-element arrays into a plain string.
+    # the script or clutter the log. Results are returned with a leading
+    # comma so PowerShell does not unroll one-element arrays into a string.
     $ErrorActionPreference = 'Continue'
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        foreach ($v in @('3.12', '3.13', '3.11', '3.10')) {
-            & py "-$v" -c "import sys" 2>$null | Out-Null
+        foreach ($v in $Versions) {
+            & py "-$v" -c "import sys" 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) { return , @('py', "-$v") }
         }
     }
     if (Get-Command python -ErrorAction SilentlyContinue) {
         $ver = & python -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
-        if ($LASTEXITCODE -eq 0 -and "$ver" -match '^3\.(1[0-3])$') { return , @('python') }
+        if ($LASTEXITCODE -eq 0 -and $Versions -contains "$ver".Trim()) { return , @('python') }
     }
     return $null
 }
 
 function Ensure-Python([string]$Tools) {
-    $system = Find-SystemPython
+    # Krita 5.2's Python plugins are built against the Python 3.10 packaged
+    # with its dependencies (sip, PyQt5), and KDE's CI uses Python 3.10 too.
+    # With another version Krita still builds, only without Python plugins.
+    $system = Find-SystemPython @('3.10')
     if ($system) { return , $system }
-    $dir = Join-Path $Tools 'python'
+    $dir = Join-Path $Tools "python-$PythonNugetVersion"
     $exe = Join-Path $dir 'tools\python.exe'
     if (-not (Test-Path $exe)) {
         Step "Tasinabilir Python $PythonNugetVersion indiriliyor"
-        # The python.org NuGet package is a complete Python (with venv and pip)
-        # that runs without installation.
+        # The python.org NuGet package is a complete Python (with venv, pip,
+        # headers and import library) that runs without installation.
         $pkg = Join-Path $Tools "python.$PythonNugetVersion.zip"
-        Get-File "https://api.nuget.org/v3-flatcontainer/python/$PythonNugetVersion/python.$PythonNugetVersion.nupkg" $pkg
-        Expand-ZipFile $pkg $dir
+        if (Get-File "https://api.nuget.org/v3-flatcontainer/python/$PythonNugetVersion/python.$PythonNugetVersion.nupkg" $pkg -Optional) {
+            Expand-ZipFile $pkg $dir
+        }
         Remove-Item $pkg -ErrorAction SilentlyContinue
-        if (-not (Test-Path $exe)) { Fail "Tasinabilir Python acilamadi: $exe yok." }
     }
-    return , @($exe)
+    if (Test-Path $exe) { return , @($exe) }
+    $other = Find-SystemPython @('3.12', '3.13', '3.11')
+    if ($other) {
+        Write-Host '   UYARI: Python 3.10 hazirlanamadi; Krita Python eklentileri olmadan derlenecek.' -ForegroundColor Yellow
+        return , $other
+    }
+    Fail 'Python bulunamadi ve indirilemedi.'
+}
+
+function Get-PythonVersion([string[]]$Python) {
+    $ErrorActionPreference = 'Continue'
+    $pyArgs = @()
+    if ($Python.Count -gt 1) { $pyArgs += $Python[1..($Python.Count - 1)] }
+    $ver = & $Python[0] @pyArgs -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+    return "$ver".Trim()
+}
+
+function Get-VenvVersion([string]$Venv) {
+    # pyvenv.cfg contains e.g. "version = 3.10.7".
+    $cfg = Join-Path $Venv 'pyvenv.cfg'
+    if (-not (Test-Path $cfg)) { return '' }
+    $m = Select-String -Path $cfg -Pattern '^\s*version(?:_info)?\s*=\s*(\d+\.\d+)' | Select-Object -First 1
+    if ($m) { return $m.Matches[0].Groups[1].Value }
+    return ''
+}
+
+function Write-DepsFile([string]$Branch) {
+    # .kde-ci.yml for KDE's CI script, made from the seed file as on CI.
+    Invoke-Checked $VenvPy @('-u', 'krita-deps-management\tools\replace-branch-in-seed-file.py',
+                             'krita-deps-management\latest\krita-deps.yml',
+                             '-o', 'branch-corrected-deps.yml', '-d', $Branch) 'seed dosyasi'
+    Invoke-Checked $VenvPy @('-u', 'krita-deps-management\tools\generate-deps-file.py',
+                             '-s', 'branch-corrected-deps.yml', '-o', '.kde-ci.yml') '.kde-ci.yml olusturma'
+    # Skip the G'MIC plugin build that runs after Krita's install step: it is
+    # not needed here and takes long.
+    Invoke-Checked $VenvPy @('-c', "import yaml; p='.kde-ci.yml'; c=yaml.safe_load(open(p)); c['PostInstallScripts']={}; yaml.safe_dump(c, open(p,'w'))") '.kde-ci.yml duzenleme'
+}
+
+function Clear-DepsInstall {
+    # Packages are merged into _install, so another set must start from an
+    # empty folder; the old build folder belongs to the old set. Downloads
+    # stay in the cache folder.
+    foreach ($dir in @((Join-Path $Krita '_install'), (Join-Path $Krita '_build'))) {
+        if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+    }
+    Remove-Item (Join-Path $Krita '.atherta-deps-ok') -ErrorAction SilentlyContinue
+}
+
+function Invoke-DepsFetch {
+    # Downloads and unpacks the packages listed in .kde-ci.yml. Returns 'ok',
+    # 'missing' (the registry has no such package for the requested branch)
+    # or 'error' (anything else, e.g. the network).
+    Write-Host "   > $VenvPy -u $RunCi $($CiArgs -join ' ') --only-deps" -ForegroundColor DarkGray
+    $state = @{ Missing = $false }
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    & $VenvPy -u $RunCi @CiArgs --only-deps 2>&1 | ForEach-Object {
+        $line = Format-NativeLine $_
+        Write-Host $line
+        if ($line -match 'Unable to locate requested dependency') { $state.Missing = $true }
+    }
+    if ($LASTEXITCODE -eq 0) { return 'ok' }
+    if ($state.Missing) { return 'missing' }
+    return 'error'
+}
+
+function Test-GitApply([string[]]$Arguments) {
+    $ErrorActionPreference = 'Continue'
+    & git -C $Krita apply --check --ignore-whitespace @Arguments 2>&1 | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Sync-KritaPatches([string]$DepsBranch) {
+    # Small fixes Krita 5.2 needs to compile against the newer 'master'
+    # packages. They are applied only with that set and taken back otherwise,
+    # so the Krita sources always match the packages in _install.
+    $dir = Join-Path $Atherta 'windows\krita-patches'
+    if (-not (Test-Path $dir)) { return }
+    $want = ($DepsBranch -eq 'master')
+    foreach ($patch in (Get-ChildItem -Path $dir -Filter '*.patch' | Sort-Object Name)) {
+        $applied = Test-GitApply @('--reverse', $patch.FullName)
+        if ($want -and -not $applied) {
+            if (-not (Test-GitApply @($patch.FullName))) { Fail "Krita yamasi uygulanamadi: $($patch.Name)" }
+            Invoke-Checked git @('-C', $Krita, 'apply', '--ignore-whitespace', $patch.FullName) "yama $($patch.Name)"
+        } elseif (-not $want -and $applied) {
+            Invoke-Checked git @('-C', $Krita, 'apply', '--ignore-whitespace', '--reverse', $patch.FullName) "yama geri alma $($patch.Name)"
+        }
+    }
 }
 
 function Test-CMakeVersion {
@@ -400,9 +547,18 @@ try {
     }
 
     # --- 2. Python environment ---------------------------------------------
-    $VenvPy = Join-Path $Krita 'venv\Scripts\python.exe'
+    # The venv must use the Python version the Python plugins of the
+    # dependency packages were built for (as on KDE's CI). A venv made with
+    # another version (older versions of this script) is recreated.
+    $Venv = Join-Path $Krita 'venv'
+    $VenvPy = Join-Path $Venv 'Scripts\python.exe'
+    $PyVersion = Get-PythonVersion $Python
+    if ((Test-Path $VenvPy) -and ((Get-VenvVersion $Venv) -ne $PyVersion)) {
+        Step "Python sanal ortami Python $PyVersion ile yeniden olusturuluyor"
+        Remove-Item -Recurse -Force $Venv
+    }
     if (-not (Test-Path $VenvPy)) {
-        Step 'Python sanal ortami olusturuluyor'
+        Step "Python sanal ortami olusturuluyor (Python $PyVersion)"
         $py = $Python[0]
         $pyArgs = @()
         if ($Python.Count -gt 1) { $pyArgs += $Python[1..($Python.Count - 1)] }
@@ -410,24 +566,16 @@ try {
     }
     # Separate marker so that a failed pip run (network, antivirus) is
     # retried on the next run instead of leaving a venv without packages.
-    $PipMarker = Join-Path $Krita 'venv\.atherta-pip-ok'
+    $PipMarker = Join-Path $Venv '.atherta-pip-ok'
     if (-not (Test-Path $PipMarker)) {
         Step 'Python paketleri kuruluyor (yalnizca bu klasore)'
         Invoke-Checked $VenvPy @('-m', 'pip', 'install', '-r', 'krita-deps-management\requirements.txt') 'pip install'
         Set-Content -Path $PipMarker -Value (Get-Date)
     }
-    Add-ToPath (Join-Path $Krita 'venv\Scripts')
-
-    # --- 3. Dependency list (as on CI) -------------------------------------
-    Step 'Bagimlilik listesi hazirlaniyor'
-    Invoke-Checked $VenvPy @('-u', 'krita-deps-management\tools\replace-branch-in-seed-file.py',
-                             'krita-deps-management\latest\krita-deps.yml', '-p',
-                             '-o', 'branch-corrected-deps.yml', '-d', 'master') 'seed dosyasi'
-    Invoke-Checked $VenvPy @('-u', 'krita-deps-management\tools\generate-deps-file.py',
-                             '-s', 'branch-corrected-deps.yml', '-o', '.kde-ci.yml') '.kde-ci.yml olusturma'
-    # Skip the G'MIC plugin build that runs after Krita's install step: it is
-    # not needed here and takes long.
-    Invoke-Checked $VenvPy @('-c', "import yaml; p='.kde-ci.yml'; c=yaml.safe_load(open(p)); c['PostInstallScripts']={}; yaml.safe_dump(c, open(p,'w'))") '.kde-ci.yml duzenleme'
+    Add-ToPath (Join-Path $Venv 'Scripts')
+    # As after venv\Scripts\Activate.ps1 on CI: Krita's CMake then finds this
+    # Python (and its packages) instead of another one on the computer.
+    $env:VIRTUAL_ENV = $Venv
 
     # Environment used by KDE's CI scripts (see windows.yml and tools/setup-env.py).
     $env:PYTHONUTF8 = '1'
@@ -446,17 +594,52 @@ try {
     $RunCi = 'krita-deps-management\ci-utilities\run-ci-build.py'
     $CiArgs = @('--project', 'krita', '--branch', $KritaBranch, '--platform', 'Windows/Qt5/Shared')
 
-    # --- 4. Prebuilt dependencies ------------------------------------------
-    $DepsMarker = Join-Path $Krita '.atherta-deps-ok'
-    if (-not (Test-Path $DepsMarker)) {
-        Step 'KDE hazir Windows bagimliliklari indiriliyor (birkac GB)'
-        Invoke-Checked $VenvPy (@('-u', $RunCi) + $CiArgs + @('--only-deps')) 'bagimlilik indirme'
-        Set-Content -Path $DepsMarker -Value (Get-Date)
-    } else {
-        Step 'Bagimliliklar zaten indirilmis'
+    # --- 3. Prebuilt dependencies ------------------------------------------
+    # KDE publishes the Windows dependency packages per branch. Krita 5.2's
+    # CI asks for 'master', but those were updated in 2026 (Boost 1.90,
+    # Eigen 5, poppler 26, ...) after the last Krita 5.2 release. The set
+    # published from the krita/5.2 branch of krita-deps-management matches
+    # Krita 5.2, so it is tried first; 'master' is the fallback.
+    $DepsMarker = Join-Path $Krita '.atherta-deps-ok'             # holds the set in _install
+    $NoKrita52Marker = Join-Path $Krita '.atherta-deps-krita52-yok'
+    $Installed = ''
+    if (Test-Path $DepsMarker) {
+        $Installed = "$(Get-Content $DepsMarker -TotalCount 1)".Trim()
+        # Older versions of this script always used 'master' and stored a date.
+        if ($Installed -notin @('krita/5.2', 'master')) { $Installed = 'master' }
     }
+    $DepsBranch = if (Test-Path $NoKrita52Marker) { 'master' } else { 'krita/5.2' }
 
-    # --- 5. Compiler ----------------------------------------------------------
+    if ($Installed -eq $DepsBranch) {
+        Step "Bagimliliklar zaten indirilmis ($DepsBranch)"
+        Write-DepsFile $DepsBranch
+    } else {
+        if ($DepsBranch -eq 'krita/5.2') {
+            Step 'Krita 5.2 ile uyumlu bagimlilik paketleri deneniyor (krita/5.2, birkac GB)'
+            Write-DepsFile 'krita/5.2'
+            Clear-DepsInstall
+            $result = Invoke-DepsFetch
+            if ($result -eq 'ok') {
+                Set-Content -Path $DepsMarker -Value 'krita/5.2'
+            } elseif ($result -eq 'missing') {
+                Write-Host '   krita/5.2 paketleri tam degil; master paketleri kullanilacak.' -ForegroundColor Yellow
+                Set-Content -Path $NoKrita52Marker -Value (Get-Date)
+                $DepsBranch = 'master'
+            } else {
+                Fail 'Bagimlilik paketleri indirilemedi (internet baglantisini kontrol edip tekrar deneyin).'
+            }
+        }
+        if ($DepsBranch -eq 'master') {
+            Step 'KDE hazir Windows bagimliliklari indiriliyor (master, birkac GB)'
+            Write-DepsFile 'master'
+            Clear-DepsInstall
+            if ((Invoke-DepsFetch) -ne 'ok') { Fail 'Bagimlilik paketleri indirilemedi.' }
+            Set-Content -Path $DepsMarker -Value 'master'
+        }
+    }
+    Sync-KritaPatches $DepsBranch
+
+    # --- 4. Compiler ----------------------------------------------------------
     $QtCore = Join-Path $Krita '_install\bin\Qt5Core.dll'
     if (-not (Test-Path $QtCore)) { Fail "Bagimliliklar eksik gorunuyor ($QtCore yok). -Clean ile tekrar deneyin." }
     $Crt = Get-CrtFlavor $QtCore
@@ -478,17 +661,33 @@ try {
     $env:MINGW_BIN_DIR = Join-Path $LlvmDir 'bin'
     Invoke-Checked 'clang++' @('--version') 'derleyici kontrolu'
 
-    # --- 6. Build Krita + plugin ----------------------------------------------
+    # --- 5. Build Krita + plugin ----------------------------------------------
     $Inject = (Join-Path $Atherta 'cmake\KritaInject.cmake') -replace '\\', '/'
     $env:KDECI_EXTRA_CMAKE_ARGS = "-DBUILD_TESTING=OFF -DHIDE_SAFE_ASSERTS=ON -DCMAKE_PROJECT_krita_INCLUDE=$Inject"
+    $DetailLog = Join-Path $LogDir 'derleme-ayrinti.txt'
+    Set-Content -Path $DetailLog -Value "Atherta derleme ayrintilari $(Get-Date)"
     Step 'Krita ve Atherta eklentisi derleniyor (en uzun adim)'
-    Invoke-Checked $VenvPy (@('-u', $RunCi) + $CiArgs + @('--skip-publishing', '--skip-dependencies-fetch')) 'Krita derlemesi'
+    Write-Host "   Derleyici uyarilari yalnizca $DetailLog dosyasina yazilir." -ForegroundColor DarkGray
+    $code = Invoke-Build $VenvPy (@('-u', $RunCi) + $CiArgs + @('--skip-publishing', '--skip-dependencies-fetch')) $DetailLog
+    if ($code -ne 0) {
+        $BuildDir = Join-Path $Krita '_build'
+        if (Test-Path (Join-Path $BuildDir 'build.ninja')) {
+            # One more pass that does not stop at the first error, so that a
+            # single run reports every file that fails to compile.
+            Step 'Hata alindi; tum hatalari toplamak icin derlemeye devam ediliyor'
+            $env:Path = "$(Join-Path $Krita '_install\bin');$(Join-Path $Krita '_install\lib');$env:Path"
+            $env:PYTHONPATH = Join-Path $Krita '_install\lib\site-packages'
+            [void](Invoke-Build 'cmake' @('--build', $BuildDir, '--parallel', "$env:NUMBER_OF_PROCESSORS", '--', '-k', '0') $DetailLog)
+        }
+        Show-BuildErrors $DetailLog
+        Fail "Krita derlemesi basarisiz oldu (cikis kodu $code)."
+    }
 
     $Plugin = Join-Path $Krita '_install\lib\kritaplugins\kritaatherta3d.dll'
     if (-not (Test-Path $Plugin)) { Fail "Eklenti olusmadi: $Plugin" }
     Write-Host "   eklenti: $Plugin" -ForegroundColor Green
 
-    # --- 7. Portable package -----------------------------------------------
+    # --- 6. Portable package -----------------------------------------------
     $Portable = Join-Path $BuildRoot 'Krita-Atherta'
     if ($SevenZip) {
         Step 'Tasinabilir Krita klasoru olusturuluyor'

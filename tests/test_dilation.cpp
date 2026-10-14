@@ -5,7 +5,7 @@
 
 #include "doctest.h"
 
-#include "GutterDilation.h"
+#include "core/GutterDilation.h"
 
 #include <vector>
 
